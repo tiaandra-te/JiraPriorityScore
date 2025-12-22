@@ -8,6 +8,7 @@ public record JiraSettings
     public string ApiToken { get; init; } = "";
     public int FilterId { get; init; }
     public int PageSize { get; init; } = 50;
+    public bool DryRun { get; init; } = true;
 
     public string RequestTypeFieldId { get; init; } = "";
     public string RequestTypeFieldName { get; init; } = "Request Type";

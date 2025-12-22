@@ -20,8 +20,6 @@ public class JiraClient
         var jql = $"filter={_settings.FilterId}";
         var fieldsParam = fields.Length == 0 ? "summary" : string.Join(",", fields);
         var url = $"rest/api/{_settings.ApiVersion}/search/jql?jql={Uri.EscapeDataString(jql)}&startAt={startAt}&maxResults={maxResults}&fields={Uri.EscapeDataString(fieldsParam)}";
-        Console.WriteLine($"Jira Request: GET {new Uri(_httpClient.BaseAddress!, url)}");
-
         using var response = await _httpClient.GetAsync(url);
         var rawBody = await response.Content.ReadAsStringAsync();
         if (!response.IsSuccessStatusCode)
@@ -97,7 +95,6 @@ public class JiraClient
     public async Task<Dictionary<string, string>> LoadIssueFieldNamesAsync(string issueKey)
     {
         var url = $"rest/api/{_settings.ApiVersion}/issue/{issueKey}?expand=names&fields=summary";
-        Console.WriteLine($"Jira Request: GET {new Uri(_httpClient.BaseAddress!, url)}");
         using var response = await _httpClient.GetAsync(url);
         var rawBody = await response.Content.ReadAsStringAsync();
         if (!response.IsSuccessStatusCode)
@@ -122,9 +119,97 @@ public class JiraClient
         return map;
     }
 
+    public async Task<bool> UpdatePriorityScoreAsync(string issueKey, double newScore)
+    {
+        var url = $"rest/api/{_settings.ApiVersion}/issue/{issueKey}";
+        var payload = new
+        {
+            fields = new Dictionary<string, object>
+            {
+                [_settings.PriorityScoreFieldId] = newScore
+            }
+        };
+
+        using var response = await _httpClient.PutAsync(
+            url,
+            new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"));
+
+        if (response.IsSuccessStatusCode)
+        {
+            return true;
+        }
+
+        var body = await response.Content.ReadAsStringAsync();
+        Console.WriteLine($"Failed to update PriorityScore for {issueKey}: {(int)response.StatusCode} {body}");
+        return false;
+    }
+
+    public async Task<bool> AddCommentAsync(string issueKey, string commentText, string? assigneeAccountId)
+    {
+        var url = $"rest/api/{_settings.ApiVersion}/issue/{issueKey}/comment";
+        var content = new List<object>
+        {
+            new
+            {
+                type = "paragraph",
+                content = BuildCommentContent(commentText, assigneeAccountId)
+            }
+        };
+
+        var payload = new
+        {
+            body = new
+            {
+                type = "doc",
+                version = 1,
+                content
+            }
+        };
+
+        using var response = await _httpClient.PostAsync(
+            url,
+            new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"));
+
+        if (response.IsSuccessStatusCode)
+        {
+            return true;
+        }
+
+        var body = await response.Content.ReadAsStringAsync();
+        Console.WriteLine($"Failed to add comment for {issueKey}: {(int)response.StatusCode} {body}");
+        return false;
+    }
+
+    private static object[] BuildCommentContent(string commentText, string? assigneeAccountId)
+    {
+        var parts = commentText.Split(new[] { "[assignee]" }, StringSplitOptions.None);
+        var content = new List<object>();
+
+        if (parts.Length > 1 && !string.IsNullOrWhiteSpace(assigneeAccountId))
+        {
+            if (!string.IsNullOrWhiteSpace(parts[0]))
+            {
+                content.Add(new { type = "text", text = parts[0] });
+            }
+
+            content.Add(new { type = "mention", attrs = new { id = assigneeAccountId } });
+
+            if (!string.IsNullOrWhiteSpace(parts[1]))
+            {
+                content.Add(new { type = "text", text = parts[1] });
+            }
+        }
+        else
+        {
+            var sanitized = commentText.Replace("[assignee]", "Assignee");
+            content.Add(new { type = "text", text = sanitized });
+        }
+
+        return content.ToArray();
+    }
+
     private async Task<JsonElement> TryLoadIssueFieldsAsync(string url, string issueKey, string label)
     {
-        Console.WriteLine($"Jira Request: GET {new Uri(_httpClient.BaseAddress!, url)}");
         using var response = await _httpClient.GetAsync(url);
         var rawBody = await response.Content.ReadAsStringAsync();
         if (!response.IsSuccessStatusCode)

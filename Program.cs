@@ -11,6 +11,13 @@ internal static class Program
 {
     private static async Task Main()
     {
+        var logBuffer = new StringBuilder();
+        var teeWriter = new TeeTextWriter(Console.Out, logBuffer);
+        Console.SetOut(teeWriter);
+        Console.SetError(teeWriter);
+
+        EmailSettings? emailSettings = null;
+
         try
         {
             var appSettingsPath = AppSettingsLocator.Find("appsettings.json");
@@ -26,6 +33,7 @@ internal static class Program
                 .Build();
 
             var settings = configuration.GetSection("Jira").Get<JiraSettings>();
+            emailSettings = configuration.GetSection("Email").Get<EmailSettings>();
             if (settings == null)
             {
                 Console.WriteLine("Missing Jira settings.");
@@ -58,6 +66,15 @@ internal static class Program
         catch (Exception ex)
         {
             Console.WriteLine($"Error: {ex.Message}");
+        }
+        finally
+        {
+            if (emailSettings != null)
+            {
+                using var emailClient = new HttpClient();
+                var emailService = new EmailService(emailClient, emailSettings);
+                await emailService.SendAsync(emailSettings.Subject, logBuffer.ToString());
+            }
         }
     }
 }

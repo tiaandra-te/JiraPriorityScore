@@ -21,6 +21,7 @@ public class IssueProcessor
 
         var fields = new[]
         {
+            "assignee",
             _settings.RequestTypeFieldId,
             _settings.PriorityScoreFieldId,
             _settings.ReachFieldId,
@@ -66,7 +67,7 @@ public class IssueProcessor
 
             foreach (var issue in page.Issues)
             {
-                Console.WriteLine($"Processing issue {issue.Key}...");
+                Console.WriteLine($"\nProcessing issue {issue.Key}...");
                 var issueFields = issue.Fields;
                 if (issueFields.ValueKind == JsonValueKind.Undefined)
                 {
@@ -82,12 +83,12 @@ public class IssueProcessor
 
                 if (FieldParser.IsMatch(requestType, _settings.RequestTypeProductValue))
                 {
-                    LogProductIssue(issue.Key, issueFields);
+                    await ProcessProductIssueAsync(issue.Key, issueFields);
                 }
                 else if (FieldParser.IsMatch(requestType, _settings.RequestTypeEngineeringEnablerValue) ||
                          FieldParser.IsMatch(requestType, _settings.RequestTypeKtloValue))
                 {
-                    LogEngineeringIssue(issue.Key, issueFields);
+                    await ProcessEngineeringIssueAsync(issue.Key, issueFields);
                 }
                 else
                 {
@@ -164,7 +165,7 @@ public class IssueProcessor
         return FieldParser.GetFieldString(refreshed, resolvedFieldId);
     }
 
-    private void LogProductIssue(string issueKey, JsonElement fields)
+    private async Task ProcessProductIssueAsync(string issueKey, JsonElement fields)
     {
         var priorityScore = FieldParser.GetFieldNumber(fields, _settings.PriorityScoreFieldId);
         var reach = FieldParser.GetFieldNumber(fields, _settings.ReachFieldId);
@@ -173,9 +174,28 @@ public class IssueProcessor
         var effort = FieldParser.GetFieldNumber(fields, _settings.EffortFieldId);
 
         Console.WriteLine($"[{issueKey}] Product PR | PriorityScore={FieldParser.FormatNumber(priorityScore)} Reach={FieldParser.FormatNumber(reach)} Impact={FieldParser.FormatNumber(impact)} Confidence={FieldParser.FormatNumber(confidence)} Effort={FieldParser.FormatNumber(effort)}");
+
+        var tempPriorityScore = 0d;
+        var missingInputs = reach is null ||
+                            impact is null ||
+                            confidence is null ||
+                            effort is null ||
+                            effort == 0;
+
+        if (!missingInputs)
+        {
+            tempPriorityScore = (reach.Value * impact.Value * confidence.Value) / effort.Value;
+        }
+
+        var roundedTemp = Math.Round(tempPriorityScore, 0, MidpointRounding.AwayFromZero);
+        Console.WriteLine($"[{issueKey}] Product PR TempPriorityScore={roundedTemp:0}");
+        var comment = $"[assignee] updated priority from {FieldParser.FormatNumber(priorityScore)} to {roundedTemp:0} " +
+                      $"(Reach={FieldParser.FormatNumber(reach)}, Impact={FieldParser.FormatNumber(impact)}, Confidence={FieldParser.FormatNumber(confidence)}, Effort={FieldParser.FormatNumber(effort)})";
+
+        await UpdatePriorityScoreIfNeededAsync(issueKey, priorityScore, roundedTemp, fields, comment, missingInputs || !priorityScore.HasValue);
     }
 
-    private void LogEngineeringIssue(string issueKey, JsonElement fields)
+    private async Task ProcessEngineeringIssueAsync(string issueKey, JsonElement fields)
     {
         var priorityScore = FieldParser.GetFieldNumber(fields, _settings.PriorityScoreFieldId);
         var businessWeight = FieldParser.GetFieldNumber(fields, _settings.BusinessWeightFieldId);
@@ -184,6 +204,113 @@ public class IssueProcessor
         var opportunityEnablement = FieldParser.GetFieldNumber(fields, _settings.OpportunityEnablementFieldId);
 
         Console.WriteLine($"[{issueKey}] Engineering Enabler/KTLO | PriorityScore={FieldParser.FormatNumber(priorityScore)} BusinessWeight={FieldParser.FormatNumber(businessWeight)} TimeCriticality={FieldParser.FormatNumber(timeCriticality)} RiskReduction={FieldParser.FormatNumber(riskReduction)} OpportunityEnablement={FieldParser.FormatNumber(opportunityEnablement)}");
+
+        var tempPriorityScore = 0d;
+        if (businessWeight is double bw &&
+            timeCriticality is double tc &&
+            riskReduction is double rr &&
+            opportunityEnablement is double oe)
+        {
+            tempPriorityScore = (((bw * 0.2) +
+                                  (tc * 0.3) +
+                                  (rr * 0.3) +
+                                  (oe * 0.2) - 1) / 3) * 1000;
+        }
+
+        var roundedTemp = Math.Round(tempPriorityScore, 0, MidpointRounding.AwayFromZero);
+        Console.WriteLine($"[{issueKey}] Engineering Enabler/KTLO TempPriorityScore={roundedTemp:0}");
+        var comment = $"[assignee] updated priority from {FieldParser.FormatNumber(priorityScore)} to {roundedTemp:0} " +
+                      $"(Business Weight={FieldParser.FormatNumber(businessWeight)}, Time Criticality={FieldParser.FormatNumber(timeCriticality)}, Risk Reduction={FieldParser.FormatNumber(riskReduction)}, Opportunity Enablement={FieldParser.FormatNumber(opportunityEnablement)})";
+
+        await UpdatePriorityScoreIfNeededAsync(issueKey, priorityScore, roundedTemp, fields, comment, false);
+    }
+
+    private async Task UpdatePriorityScoreIfNeededAsync(string issueKey, double? currentScore, double newScore, JsonElement fields, string commentText, bool forceUpdate)
+    {
+        var current = currentScore ?? 0d;
+        if (!forceUpdate && Math.Abs(current - newScore) < 0.0001)
+        {
+            Console.WriteLine($"[{issueKey}] PriorityScore unchanged.");
+            return;
+        }
+
+        var assigneeAccountId = GetAssigneeAccountId(fields);
+        var assigneeDisplay = GetAssigneeDisplayName(fields);
+        var formattedComment = commentText;
+        if (!string.IsNullOrWhiteSpace(assigneeDisplay))
+        {
+            formattedComment = formattedComment.Replace("[assignee]", assigneeDisplay);
+        }
+        else
+        {
+            formattedComment = formattedComment.Replace("[assignee]", "Assignee");
+        }
+
+
+        if (_settings.DryRun)
+        {
+            Console.WriteLine($"[{issueKey}] DryRun - would update PriorityScore to {newScore:0.####}.");
+            if (currentScore is null && newScore == 0)
+            {
+                Console.WriteLine($"[{issueKey}] DryRun - skipping comment because PriorityScore is null and new value is 0.");
+            }
+            else
+            {
+                Console.WriteLine($"[{issueKey}] DryRun - would add comment:\n{formattedComment}");
+            }
+            return;
+        }
+
+        var updated = await _jiraClient.UpdatePriorityScoreAsync(issueKey, newScore);
+        if (updated)
+        {
+            Console.WriteLine($"[{issueKey}] PriorityScore updated to {newScore:0.####}.");
+            if (currentScore is null && newScore == 0)
+            {
+                Console.WriteLine($"[{issueKey}] Skipped Jira comment because PriorityScore is null and new value is 0.");
+                return;
+            }
+
+            var commented = await _jiraClient.AddCommentAsync(issueKey, commentText, assigneeAccountId);
+            if (commented)
+            {
+                Console.WriteLine($"[{issueKey}] Comment added:\n{formattedComment}");
+            }
+        }
+    }
+
+    private static string? GetAssigneeAccountId(JsonElement fields)
+    {
+        if (fields.ValueKind != JsonValueKind.Object ||
+            !fields.TryGetProperty("assignee", out var assignee) ||
+            assignee.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        if (assignee.TryGetProperty("accountId", out var accountId) && accountId.ValueKind == JsonValueKind.String)
+        {
+            return accountId.GetString();
+        }
+
+        return null;
+    }
+
+    private static string? GetAssigneeDisplayName(JsonElement fields)
+    {
+        if (fields.ValueKind != JsonValueKind.Object ||
+            !fields.TryGetProperty("assignee", out var assignee) ||
+            assignee.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        if (assignee.TryGetProperty("displayName", out var displayName) && displayName.ValueKind == JsonValueKind.String)
+        {
+            return displayName.GetString();
+        }
+
+        return null;
     }
 
     private static List<string> GetFieldKeys(JsonElement fields)
