@@ -7,4 +7,5 @@ public record EmailSettings
     public string FromEmail { get; init; } = "";
     public string ToEmail { get; init; } = "";
     public string Subject { get; init; } = "JiraPriorityScore report";
+    public bool SendReport { get; init; } = true;
 }

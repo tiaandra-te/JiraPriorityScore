@@ -1,15 +1,27 @@
 # JiraPriorityScore
 
-Console app that loads issues from a Jira filter ID and logs key fields by request type.
+Console app that loads issues from a Jira filter ID, computes PriorityScore values, and updates Jira (unless DryRun is enabled). It can also email a run report.
 
 ## What it does
-- Uses Jira API to page through all issues in a filter.
-- For Request Type = Product PR, logs PriorityScore, Reach, Impact, Confidence, Effort.
-- For Request Type = Engineering Enabler or Keep the Lights on (KTLO), logs PriorityScore, Business Weight, Time Criticality, Risk Reduction, Opportunity Enablement.
-- Logs all processing steps to the console.
+- Pages through issues in the configured Jira filter ID.
+- Product PR: computes `(Reach * Impact * Confidence) / Effort`, rounds to integer, updates PriorityScore when changed.
+- Engineering Enabler/KTLO: computes `((Business Weight*0.2 + Time Criticality*0.3 + Risk Reduction*0.3 + Opportunity Enablement*0.2 - 1) / 3) * 1000`, rounds to integer, updates PriorityScore when changed.
+- Adds a Jira comment on updates (unless updating from null to 0).
+- Logs actions to the console and can send the log as an email report.
 
 ## Configure
-Edit `appsettings.json` with your Jira site, credentials, filter ID, and custom field IDs.
+Edit `appsettings.json`:
+- `Jira` section: site URL, email, API token, filter ID, custom field IDs, request type values, `DryRun`.
+- `Email` section: `SendReport`, SendGrid `ApiKey`, `FromEmail`, `ToEmail`, and `Subject`.
+
+Notes:
+- Set `DryRun` to `true` to avoid Jira writes while testing.
+- Set `SendReport` to `false` to skip email.
+
+## Build
+```
+dotnet build
+```
 
 ## Run
 ```

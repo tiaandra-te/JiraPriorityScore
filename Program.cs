@@ -69,7 +69,7 @@ internal static class Program
         }
         finally
         {
-            if (emailSettings != null)
+            if (emailSettings != null && emailSettings.SendReport)
             {
                 using var emailClient = new HttpClient();
                 var emailService = new EmailService(emailClient, emailSettings);

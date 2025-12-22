@@ -243,7 +243,7 @@ public class IssueProcessor
         }
         else
         {
-            formattedComment = formattedComment.Replace("[assignee]", "Assignee");
+            formattedComment = formattedComment.Replace("[assignee]", "").TrimStart();
         }
 
 

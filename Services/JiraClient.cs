@@ -201,7 +201,7 @@ public class JiraClient
         }
         else
         {
-            var sanitized = commentText.Replace("[assignee]", "Assignee");
+            var sanitized = commentText.Replace("[assignee]", "").TrimStart();
             content.Add(new { type = "text", text = sanitized });
         }
 
