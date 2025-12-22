@@ -1,0 +1,101 @@
+# Build results
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio files
+.vs/
+*.user
+*.userosscache
+*.suo
+*.cache
+*.docstates
+
+# Visual Studio Code files
+.vscode/
+
+# Rider
+.idea/
+
+# User-specific files
+*.rsuser
+*.sln.docstates
+
+# Build outputs
+*.log
+*.tlog
+*.lastbuildstate
+*.VC.db
+*.VC.VC.opendb
+
+# NUnit
+*.VisualState.xml
+TestResult.xml
+nunit.framework.dll
+
+# MSTest
+*.testsettings
+*.trx
+TestResults/
+
+# NDepend
+*.ndep
+
+# Resharper
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+
+# DotCover
+*.dotCover
+
+# StyleCop
+StyleCopReport.xml
+
+# DocProject
+DocProject/buildhelp/
+DocProject/Help/*.HxT
+DocProject/Help/*.HxC
+DocProject/Help/*.hhc
+DocProject/Help/*.hhk
+DocProject/Help/*.hhp
+DocProject/Help/Html2
+DocProject/Help/html
+
+# Click-Once directory
+publish/
+
+# Publish outputs
+*.Publish.xml
+*.azurePubxml
+*.pubxml
+*.publishproj
+
+# NuGet
+*.nupkg
+*.snupkg
+*.symbols.nupkg
+*.nuspec
+packages/
+*.nuget.props
+*.nuget.targets
+
+# Azure
+ServiceFabricBackup/
+
+# Linux
+*~
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Others
+*.log
+*.tmp
+
+# Secrets
+appsettings.json
