@@ -8,6 +8,9 @@ public class IssueProcessor
 {
     private readonly JiraClient _jiraClient;
     private readonly JiraSettings _settings;
+    private int _processedCount;
+    private int _updatedCount;
+    private int _commentCount;
 
     public IssueProcessor(JiraClient jiraClient, JiraSettings settings)
     {
@@ -17,10 +20,15 @@ public class IssueProcessor
 
     public async Task ProcessFilterAsync()
     {
+        _processedCount = 0;
+        _updatedCount = 0;
+        _commentCount = 0;
+
         Console.WriteLine($"Using FilterId: {_settings.FilterId}");
 
         var fields = new[]
         {
+            "summary",
             "assignee",
             _settings.RequestTypeFieldId,
             _settings.PriorityScoreFieldId,
@@ -67,17 +75,20 @@ public class IssueProcessor
 
             foreach (var issue in page.Issues)
             {
-                Console.WriteLine($"\nProcessing issue {issue.Key}...");
                 var issueFields = issue.Fields;
                 if (issueFields.ValueKind == JsonValueKind.Undefined)
                 {
                     issueFields = await _jiraClient.LoadIssueFieldsAsync(issue.Key, fields);
                     if (issueFields.ValueKind == JsonValueKind.Undefined)
                     {
-                        Console.WriteLine($"[{issue.Key}] Skipped: could not load fields.");
+                        LogIssue(issue.Key, "Skipped: could not load fields.");
                         continue;
                     }
                 }
+
+                var summary = FieldParser.GetFieldString(issueFields, "summary") ?? "(no summary)";
+                Console.WriteLine($"\nProcessing issue {issue.Key} - {summary}...");
+                _processedCount++;
 
                 var requestType = await GetRequestTypeAsync(issue.Key, issueFields, fields);
 
@@ -93,7 +104,7 @@ public class IssueProcessor
                 else
                 {
                     var displayType = string.IsNullOrWhiteSpace(requestType) ? "(null)" : requestType;
-                    Console.WriteLine($"[{issue.Key}] Skipped: Request Type '{displayType}' not matched.");
+                    LogIssue(issue.Key, $"Skipped: Request Type '{displayType}' not matched.");
                 }
             }
 
@@ -122,7 +133,7 @@ public class IssueProcessor
 
         if (string.IsNullOrWhiteSpace(_settings.RequestTypeFieldName))
         {
-            Console.WriteLine($"[{issueKey}] Request Type field not found. Check RequestTypeFieldId.");
+            LogIssue(issueKey, "Request Type field not found. Check RequestTypeFieldId.");
             return null;
         }
 
@@ -139,17 +150,11 @@ public class IssueProcessor
 
             if (candidates.Count > 0)
             {
-                Console.WriteLine($"[{issueKey}] Request Type field name '{_settings.RequestTypeFieldName}' not found. Candidates: {string.Join(", ", candidates)}");
+                LogIssue(issueKey, $"Request Type field name '{_settings.RequestTypeFieldName}' not found. Candidates: {string.Join(", ", candidates)}");
             }
             else
             {
-                Console.WriteLine($"[{issueKey}] Request Type field name '{_settings.RequestTypeFieldName}' not found. No 'request' fields in names map.");
-            }
-
-            var fieldKeys = GetFieldKeys(issueFields);
-            if (fieldKeys.Count > 0)
-            {
-                Console.WriteLine($"[{issueKey}] Fields present in issue: {string.Join(", ", fieldKeys)}");
+                LogIssue(issueKey, $"Request Type field name '{_settings.RequestTypeFieldName}' not found. No 'request' fields in names map.");
             }
 
             return null;
@@ -157,7 +162,7 @@ public class IssueProcessor
 
         if (!string.Equals(resolvedFieldId, _settings.RequestTypeFieldId, StringComparison.OrdinalIgnoreCase))
         {
-            Console.WriteLine($"[{issueKey}] Resolved Request Type field id: {resolvedFieldId}");
+            LogIssue(issueKey, $"Resolved Request Type field id: {resolvedFieldId}");
         }
 
         var fieldOnly = new[] { resolvedFieldId };
@@ -173,7 +178,7 @@ public class IssueProcessor
         var confidence = FieldParser.GetFieldNumber(fields, _settings.ConfidenceFieldId);
         var effort = FieldParser.GetFieldNumber(fields, _settings.EffortFieldId);
 
-        Console.WriteLine($"[{issueKey}] Product PR | PriorityScore={FieldParser.FormatNumber(priorityScore)} Reach={FieldParser.FormatNumber(reach)} Impact={FieldParser.FormatNumber(impact)} Confidence={FieldParser.FormatNumber(confidence)} Effort={FieldParser.FormatNumber(effort)}");
+        LogIssue(issueKey, $"Product PR | PriorityScore={FieldParser.FormatNumber(priorityScore)} Reach={FieldParser.FormatNumber(reach)} Impact={FieldParser.FormatNumber(impact)} Confidence={FieldParser.FormatNumber(confidence)} Effort={FieldParser.FormatNumber(effort)}");
 
         var tempPriorityScore = 0d;
         var missingInputs = reach is null ||
@@ -188,7 +193,7 @@ public class IssueProcessor
         }
 
         var roundedTemp = Math.Round(tempPriorityScore, 0, MidpointRounding.AwayFromZero);
-        Console.WriteLine($"[{issueKey}] Product PR TempPriorityScore={roundedTemp:0}");
+        LogIssue(issueKey, $"Product PR TempPriorityScore={roundedTemp:0}");
         var comment = $"[assignee] updated priority from {FieldParser.FormatNumber(priorityScore)} to {roundedTemp:0} " +
                       $"(Reach={FieldParser.FormatNumber(reach)}, Impact={FieldParser.FormatNumber(impact)}, Confidence={FieldParser.FormatNumber(confidence)}, Effort={FieldParser.FormatNumber(effort)})";
 
@@ -203,7 +208,7 @@ public class IssueProcessor
         var riskReduction = FieldParser.GetFieldNumber(fields, _settings.RiskReductionFieldId);
         var opportunityEnablement = FieldParser.GetFieldNumber(fields, _settings.OpportunityEnablementFieldId);
 
-        Console.WriteLine($"[{issueKey}] Engineering Enabler/KTLO | PriorityScore={FieldParser.FormatNumber(priorityScore)} BusinessWeight={FieldParser.FormatNumber(businessWeight)} TimeCriticality={FieldParser.FormatNumber(timeCriticality)} RiskReduction={FieldParser.FormatNumber(riskReduction)} OpportunityEnablement={FieldParser.FormatNumber(opportunityEnablement)}");
+        LogIssue(issueKey, $"Engineering Enabler/KTLO | PriorityScore={FieldParser.FormatNumber(priorityScore)} BusinessWeight={FieldParser.FormatNumber(businessWeight)} TimeCriticality={FieldParser.FormatNumber(timeCriticality)} RiskReduction={FieldParser.FormatNumber(riskReduction)} OpportunityEnablement={FieldParser.FormatNumber(opportunityEnablement)}");
 
         var tempPriorityScore = 0d;
         if (businessWeight is double bw &&
@@ -218,7 +223,7 @@ public class IssueProcessor
         }
 
         var roundedTemp = Math.Round(tempPriorityScore, 0, MidpointRounding.AwayFromZero);
-        Console.WriteLine($"[{issueKey}] Engineering Enabler/KTLO TempPriorityScore={roundedTemp:0}");
+        LogIssue(issueKey, $"Engineering Enabler/KTLO TempPriorityScore={roundedTemp:0}");
         var comment = $"[assignee] updated priority from {FieldParser.FormatNumber(priorityScore)} to {roundedTemp:0} " +
                       $"(Business Weight={FieldParser.FormatNumber(businessWeight)}, Time Criticality={FieldParser.FormatNumber(timeCriticality)}, Risk Reduction={FieldParser.FormatNumber(riskReduction)}, Opportunity Enablement={FieldParser.FormatNumber(opportunityEnablement)})";
 
@@ -230,7 +235,7 @@ public class IssueProcessor
         var current = currentScore ?? 0d;
         if (!forceUpdate && Math.Abs(current - newScore) < 0.0001)
         {
-            Console.WriteLine($"[{issueKey}] PriorityScore unchanged.");
+            LogIssue(issueKey, "PriorityScore unchanged.");
             return;
         }
 
@@ -249,14 +254,14 @@ public class IssueProcessor
 
         if (_settings.DryRun)
         {
-            Console.WriteLine($"[{issueKey}] DryRun - would update PriorityScore to {newScore:0.####}.");
+            LogIssue(issueKey, $"DryRun - would update PriorityScore to {newScore:0.####}.");
             if (currentScore is null && newScore == 0)
             {
-                Console.WriteLine($"[{issueKey}] DryRun - skipping comment because PriorityScore is null and new value is 0.");
+                LogIssue(issueKey, "DryRun - skipping comment because PriorityScore is null and new value is 0.");
             }
             else
             {
-                Console.WriteLine($"[{issueKey}] DryRun - would add comment:\n{formattedComment}");
+                LogIssue(issueKey, $"DryRun - would add comment:\n\t{formattedComment}");
             }
             return;
         }
@@ -264,17 +269,19 @@ public class IssueProcessor
         var updated = await _jiraClient.UpdatePriorityScoreAsync(issueKey, newScore);
         if (updated)
         {
-            Console.WriteLine($"[{issueKey}] PriorityScore updated to {newScore:0.####}.");
+            LogIssue(issueKey, $"PriorityScore updated to {newScore:0.####}.");
+            _updatedCount++;
             if (currentScore is null && newScore == 0)
             {
-                Console.WriteLine($"[{issueKey}] Skipped Jira comment because PriorityScore is null and new value is 0.");
+                LogIssue(issueKey, "Skipped Jira comment because PriorityScore is null and new value is 0.");
                 return;
             }
 
             var commented = await _jiraClient.AddCommentAsync(issueKey, commentText, assigneeAccountId);
             if (commented)
             {
-                Console.WriteLine($"[{issueKey}] Comment added:\n{formattedComment}");
+                LogIssue(issueKey, $"Comment added:\n\t{formattedComment}");
+                _commentCount++;
             }
         }
     }
@@ -324,5 +331,15 @@ public class IssueProcessor
             .Select(prop => prop.Name)
             .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    private static void LogIssue(string issueKey, string message)
+    {
+        Console.WriteLine($"\t[{issueKey}] {message}");
+    }
+
+    public (int Processed, int Updated, int Commented) GetRunStats()
+    {
+        return (_processedCount, _updatedCount, _commentCount);
     }
 }

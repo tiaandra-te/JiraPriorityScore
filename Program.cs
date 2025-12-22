@@ -18,6 +18,8 @@ internal static class Program
 
         EmailSettings? emailSettings = null;
 
+        var startedAt = DateTimeOffset.UtcNow;
+
         try
         {
             var appSettingsPath = AppSettingsLocator.Find("appsettings.json");
@@ -62,6 +64,15 @@ internal static class Program
             var processor = new IssueProcessor(jiraClient, settings);
 
             await processor.ProcessFilterAsync();
+
+            var (processed, updated, commented) = processor.GetRunStats();
+            var duration = DateTimeOffset.UtcNow - startedAt;
+            Console.WriteLine();
+            Console.WriteLine("Run report");
+            Console.WriteLine($"Duration: {duration:hh\\:mm\\:ss}");
+            Console.WriteLine($"Issues processed: {processed}");
+            Console.WriteLine($"Issues updated: {updated}");
+            Console.WriteLine($"Comments submitted: {commented}");
         }
         catch (Exception ex)
         {
