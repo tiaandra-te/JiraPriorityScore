@@ -17,6 +17,41 @@ Edit `appsettings.json`:
 - Throttling option: `RequestDelayMs` (milliseconds to wait before each Jira API call).
 - `Email` section: `SendReport`, SendGrid `ApiKey`, `FromEmail`, `ToEmail`, and `Subject`.
 
+### Jira settings
+- `BaseUrl`: Jira site base URL (must include trailing slash).
+- `Email`: Jira account email for API authentication.
+- `ApiVersion`: Jira REST API version (default `3`).
+- `ApiToken`: Jira API token for the account email.
+- `FilterId`: Jira filter ID to load issues from.
+- `PageSize`: Max issues per page when querying the filter.
+- `DryRun`: When `true`, no Jira updates/comments are sent.
+- `LogRequests`: When `true`, logs Jira request method + URL (and payloads).
+- `LogRequestHeaders`: When `true`, logs request headers (Authorization redacted).
+- `LogResponses`: When `true`, logs full Jira response bodies.
+- `RequestDelayMs`: Delay in milliseconds before each Jira API call.
+- `RequestTypeFieldId`: Custom field ID that stores Request Type (e.g., `customfield_12345`).
+- `RequestTypeFieldName`: Friendly field name used if the ID lookup fails.
+- `PriorityScoreFieldId`: Custom field ID for PriorityScore.
+- `ReachFieldId`: Custom field ID for Reach.
+- `ImpactFieldId`: Custom field ID for Impact.
+- `ConfidenceFieldId`: Custom field ID for Confidence.
+- `EffortFieldId`: Custom field ID for Effort.
+- `BusinessWeightFieldId`: Custom field ID for Business Weight.
+- `TimeCriticalityFieldId`: Custom field ID for Time Criticality.
+- `RiskReductionFieldId`: Custom field ID for Risk Reduction.
+- `OpportunityEnablementFieldId`: Custom field ID for Opportunity Enablement.
+- `RequestTypeProductValue`: Request Type value that maps to Product PR logic.
+- `RequestTypeEngineeringEnablerValue`: Request Type value for Engineering Enabler logic.
+- `RequestTypeKtloValue`: Request Type value for KTLO logic.
+
+### Email settings
+- `Provider`: Email provider name (currently `SendGrid`).
+- `SendReport`: When `true`, sends a run report email.
+- `ApiKey`: SendGrid API key.
+- `FromEmail`: From address for the report email.
+- `ToEmail`: Recipient for the report email.
+- `Subject`: Email subject line.
+
 Notes:
 - Set `DryRun` to `true` to avoid Jira writes while testing.
 - Set `SendReport` to `false` to skip email.
