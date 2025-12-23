@@ -12,6 +12,7 @@ public record JiraSettings
     public bool LogRequests { get; init; } = false;
     public bool LogRequestHeaders { get; init; } = false;
     public bool LogResponses { get; init; } = false;
+    public int RequestDelayMs { get; init; } = 0;
 
     public string RequestTypeFieldId { get; init; } = "";
     public string RequestTypeFieldName { get; init; } = "Request Type";

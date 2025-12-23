@@ -46,6 +46,7 @@ public class JiraClient
             LogRequest(HttpMethod.Post, new Uri(_httpClient.BaseAddress!, url), requestContent);
             LogRequestPayload(payloadJson);
 
+            await DelayBeforeRequestAsync();
             using var response = await _httpClient.PostAsync(url, requestContent);
             var rawBody = await response.Content.ReadAsStringAsync();
             LogResponse(new Uri(_httpClient.BaseAddress!, url), response, rawBody);
@@ -143,6 +144,7 @@ public class JiraClient
     {
         var url = $"rest/api/{_settings.ApiVersion}/issue/{issueKey}?expand=names&fields=summary";
         LogRequest(HttpMethod.Get, new Uri(_httpClient.BaseAddress!, url), null);
+        await DelayBeforeRequestAsync();
         using var response = await _httpClient.GetAsync(url);
         var rawBody = await response.Content.ReadAsStringAsync();
         LogResponse(new Uri(_httpClient.BaseAddress!, url), response, rawBody);
@@ -184,6 +186,7 @@ public class JiraClient
         LogRequest(HttpMethod.Put, new Uri(_httpClient.BaseAddress!, url), requestContent);
         LogRequestPayload(payloadJson);
 
+        await DelayBeforeRequestAsync();
         using var response = await _httpClient.PutAsync(
             url,
             requestContent);
@@ -231,6 +234,7 @@ public class JiraClient
         LogRequest(HttpMethod.Post, new Uri(_httpClient.BaseAddress!, url), requestContent);
         LogRequestPayload(payloadJson);
 
+        await DelayBeforeRequestAsync();
         using var response = await _httpClient.PostAsync(
             url,
             requestContent);
@@ -282,6 +286,7 @@ public class JiraClient
     private async Task<JsonElement> TryLoadIssueFieldsAsync(string url, string issueKey, string label)
     {
         LogRequest(HttpMethod.Get, new Uri(_httpClient.BaseAddress!, url), null);
+        await DelayBeforeRequestAsync();
         using var response = await _httpClient.GetAsync(url);
         var rawBody = await response.Content.ReadAsStringAsync();
         LogResponse(new Uri(_httpClient.BaseAddress!, url), response, rawBody);
@@ -362,5 +367,20 @@ public class JiraClient
         }
 
         Console.WriteLine($"Jira Request Payload: {payloadJson}");
+    }
+
+    private async Task DelayBeforeRequestAsync()
+    {
+        if (_settings.RequestDelayMs <= 0)
+        {
+            return;
+        }
+
+        if (_settings.LogRequests)
+        {
+            Console.WriteLine($"Jira Request Delay: {_settings.RequestDelayMs}ms");
+        }
+
+        await Task.Delay(_settings.RequestDelayMs);
     }
 }
