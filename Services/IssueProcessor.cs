@@ -176,7 +176,7 @@ public class IssueProcessor
             roundedTemp,
             fields,
             comment,
-            allInputsNull);
+            missingInputs);
     }
 
     private async Task ProcessEngineeringIssueAsync(string issueKey, JsonElement fields)
@@ -223,8 +223,7 @@ public class IssueProcessor
 
     private async Task UpdatePriorityScoreIfNeededAsync(string issueKey, double? currentScore, double newScore, JsonElement fields, string commentText, bool skipComment)
     {
-        var current = currentScore ?? 0d;
-        if (Math.Abs(current - newScore) < 0.0001)
+        if (currentScore.HasValue && Math.Abs(currentScore.Value - newScore) < 0.0001)
         {
             LogIssue(issueKey, "PriorityScore unchanged.");
             return;
@@ -246,9 +245,9 @@ public class IssueProcessor
         if (_settings.DryRun)
         {
             LogIssue(issueKey, $"DryRun - would update PriorityScore to {newScore:0.####}.");
-            if (skipComment || (currentScore is null && newScore == 0))
+            if (skipComment)
             {
-                LogIssue(issueKey, "DryRun - skipping comment because PriorityScore and inputs are null.");
+                LogIssue(issueKey, "DryRun - skipping comment because inputs are missing.");
             }
             else
             {
@@ -262,9 +261,9 @@ public class IssueProcessor
         {
             LogIssue(issueKey, $"PriorityScore updated to {newScore:0.####}.");
             _updatedCount++;
-            if (skipComment || (currentScore is null && newScore == 0))
+            if (skipComment)
             {
-                LogIssue(issueKey, "Skipped Jira comment because PriorityScore and inputs are null.");
+                LogIssue(issueKey, "Skipped Jira comment because inputs are missing.");
                 return;
             }
 
