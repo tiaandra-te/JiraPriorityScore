@@ -53,7 +53,8 @@ internal static class Program
 
             using var httpClient = new HttpClient
             {
-                BaseAddress = new Uri(settings.BaseUrl.TrimEnd('/') + "/")
+                BaseAddress = new Uri(settings.BaseUrl.TrimEnd('/') + "/"),
+                Timeout = TimeSpan.FromSeconds(60)
             };
 
             var authValue = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{settings.Email}:{settings.ApiToken}"));

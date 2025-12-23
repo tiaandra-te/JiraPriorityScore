@@ -45,80 +45,44 @@ public class IssueProcessor
          .ToArray();
 
         var maxResults = _settings.PageSize > 0 ? _settings.PageSize : 50;
-        var startAt = 0;
-        var total = 0;
-        var totalKnown = false;
-        var loggedTotal = false;
+        var issueKeys = await _jiraClient.GetIssueKeysForFilterAsync(maxResults);
+        Console.WriteLine($"Filter {_settings.FilterId} contains {issueKeys.Count} issues.");
 
-        while (true)
+        var seenIssueKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var issueKey in issueKeys)
         {
-            var page = await _jiraClient.LoadIssuesPageAsync(fields, startAt, maxResults);
-            if (!loggedTotal)
+            if (!seenIssueKeys.Add(issueKey))
             {
-                total = page.Total;
-                totalKnown = page.IsTotalKnown;
-                if (totalKnown)
-                {
-                    Console.WriteLine($"Filter {_settings.FilterId} contains {total} issues.");
-                }
-                else
-                {
-                    Console.WriteLine($"Filter {_settings.FilterId} total is unknown; first page returned {page.Issues.Count} issues.");
-                }
-                loggedTotal = true;
+                LogIssue(issueKey, "Skipped duplicate issue from paging.");
+                continue;
             }
 
-            if (page.Issues.Count == 0)
+            var issueFields = await _jiraClient.LoadIssueFieldsAsync(issueKey, fields);
+            if (issueFields.ValueKind == JsonValueKind.Undefined)
             {
-                break;
+                LogIssue(issueKey, "Skipped: could not load fields.");
+                continue;
             }
 
-            foreach (var issue in page.Issues)
+            var summary = FieldParser.GetFieldString(issueFields, "summary") ?? "(no summary)";
+            Console.WriteLine($"\nProcessing issue {issueKey} - {summary}...");
+            _processedCount++;
+
+            var requestType = await GetRequestTypeAsync(issueKey, issueFields, fields);
+
+            if (FieldParser.IsMatch(requestType, _settings.RequestTypeProductValue))
             {
-                var issueFields = issue.Fields;
-                if (issueFields.ValueKind == JsonValueKind.Undefined)
-                {
-                    issueFields = await _jiraClient.LoadIssueFieldsAsync(issue.Key, fields);
-                    if (issueFields.ValueKind == JsonValueKind.Undefined)
-                    {
-                        LogIssue(issue.Key, "Skipped: could not load fields.");
-                        continue;
-                    }
-                }
-
-                var summary = FieldParser.GetFieldString(issueFields, "summary") ?? "(no summary)";
-                Console.WriteLine($"\nProcessing issue {issue.Key} - {summary}...");
-                _processedCount++;
-
-                var requestType = await GetRequestTypeAsync(issue.Key, issueFields, fields);
-
-                if (FieldParser.IsMatch(requestType, _settings.RequestTypeProductValue))
-                {
-                    await ProcessProductIssueAsync(issue.Key, issueFields);
-                }
-                else if (FieldParser.IsMatch(requestType, _settings.RequestTypeEngineeringEnablerValue) ||
-                         FieldParser.IsMatch(requestType, _settings.RequestTypeKtloValue))
-                {
-                    await ProcessEngineeringIssueAsync(issue.Key, issueFields);
-                }
-                else
-                {
-                    var displayType = string.IsNullOrWhiteSpace(requestType) ? "(null)" : requestType;
-                    LogIssue(issue.Key, $"Skipped: Request Type '{displayType}' not matched.");
-                }
+                await ProcessProductIssueAsync(issueKey, issueFields);
             }
-
-            startAt += page.Issues.Count;
-            if (totalKnown)
+            else if (FieldParser.IsMatch(requestType, _settings.RequestTypeEngineeringEnablerValue) ||
+                     FieldParser.IsMatch(requestType, _settings.RequestTypeKtloValue))
             {
-                if (startAt >= total)
-                {
-                    break;
-                }
+                await ProcessEngineeringIssueAsync(issueKey, issueFields);
             }
-            else if (page.Issues.Count < maxResults)
+            else
             {
-                break;
+                var displayType = string.IsNullOrWhiteSpace(requestType) ? "(null)" : requestType;
+                LogIssue(issueKey, $"Skipped: Request Type '{displayType}' not matched.");
             }
         }
     }
@@ -181,23 +145,38 @@ public class IssueProcessor
         LogIssue(issueKey, $"Product PR | PriorityScore={FieldParser.FormatNumber(priorityScore)} Reach={FieldParser.FormatNumber(reach)} Impact={FieldParser.FormatNumber(impact)} Confidence={FieldParser.FormatNumber(confidence)} Effort={FieldParser.FormatNumber(effort)}");
 
         var tempPriorityScore = 0d;
+        var allInputsNull = reach is null &&
+                            impact is null &&
+                            confidence is null &&
+                            effort is null &&
+                            priorityScore is null;
         var missingInputs = reach is null ||
                             impact is null ||
                             confidence is null ||
                             effort is null ||
                             effort == 0;
 
-        if (!missingInputs)
+        if (!missingInputs &&
+            reach is double r &&
+            impact is double i &&
+            confidence is double c &&
+            effort is double e)
         {
-            tempPriorityScore = (reach.Value * impact.Value * confidence.Value) / effort.Value;
+            tempPriorityScore = (r * i * c) / e;
         }
 
         var roundedTemp = Math.Round(tempPriorityScore, 0, MidpointRounding.AwayFromZero);
         LogIssue(issueKey, $"Product PR TempPriorityScore={roundedTemp:0}");
-        var comment = $"[assignee] updated priority from {FieldParser.FormatNumber(priorityScore)} to {roundedTemp:0} " +
+        var comment = $"[assignee] updated Priority Score from {FieldParser.FormatNumber(priorityScore)} to {roundedTemp:0} " +
                       $"(Reach={FieldParser.FormatNumber(reach)}, Impact={FieldParser.FormatNumber(impact)}, Confidence={FieldParser.FormatNumber(confidence)}, Effort={FieldParser.FormatNumber(effort)})";
 
-        await UpdatePriorityScoreIfNeededAsync(issueKey, priorityScore, roundedTemp, fields, comment, missingInputs || !priorityScore.HasValue);
+        await UpdatePriorityScoreIfNeededAsync(
+            issueKey,
+            priorityScore,
+            roundedTemp,
+            fields,
+            comment,
+            allInputsNull);
     }
 
     private async Task ProcessEngineeringIssueAsync(string issueKey, JsonElement fields)
@@ -211,7 +190,13 @@ public class IssueProcessor
         LogIssue(issueKey, $"Engineering Enabler/KTLO | PriorityScore={FieldParser.FormatNumber(priorityScore)} BusinessWeight={FieldParser.FormatNumber(businessWeight)} TimeCriticality={FieldParser.FormatNumber(timeCriticality)} RiskReduction={FieldParser.FormatNumber(riskReduction)} OpportunityEnablement={FieldParser.FormatNumber(opportunityEnablement)}");
 
         var tempPriorityScore = 0d;
-        if (businessWeight is double bw &&
+        var missingInputs = businessWeight is null ||
+                            timeCriticality is null ||
+                            riskReduction is null ||
+                            opportunityEnablement is null;
+
+        if (!missingInputs &&
+            businessWeight is double bw &&
             timeCriticality is double tc &&
             riskReduction is double rr &&
             opportunityEnablement is double oe)
@@ -227,13 +212,19 @@ public class IssueProcessor
         var comment = $"[assignee] updated priority from {FieldParser.FormatNumber(priorityScore)} to {roundedTemp:0} " +
                       $"(Business Weight={FieldParser.FormatNumber(businessWeight)}, Time Criticality={FieldParser.FormatNumber(timeCriticality)}, Risk Reduction={FieldParser.FormatNumber(riskReduction)}, Opportunity Enablement={FieldParser.FormatNumber(opportunityEnablement)})";
 
-        await UpdatePriorityScoreIfNeededAsync(issueKey, priorityScore, roundedTemp, fields, comment, false);
+        await UpdatePriorityScoreIfNeededAsync(
+            issueKey,
+            priorityScore,
+            roundedTemp,
+            fields,
+            comment,
+            missingInputs);
     }
 
-    private async Task UpdatePriorityScoreIfNeededAsync(string issueKey, double? currentScore, double newScore, JsonElement fields, string commentText, bool forceUpdate)
+    private async Task UpdatePriorityScoreIfNeededAsync(string issueKey, double? currentScore, double newScore, JsonElement fields, string commentText, bool skipComment)
     {
         var current = currentScore ?? 0d;
-        if (!forceUpdate && Math.Abs(current - newScore) < 0.0001)
+        if (Math.Abs(current - newScore) < 0.0001)
         {
             LogIssue(issueKey, "PriorityScore unchanged.");
             return;
@@ -255,9 +246,9 @@ public class IssueProcessor
         if (_settings.DryRun)
         {
             LogIssue(issueKey, $"DryRun - would update PriorityScore to {newScore:0.####}.");
-            if (currentScore is null && newScore == 0)
+            if (skipComment || (currentScore is null && newScore == 0))
             {
-                LogIssue(issueKey, "DryRun - skipping comment because PriorityScore is null and new value is 0.");
+                LogIssue(issueKey, "DryRun - skipping comment because PriorityScore and inputs are null.");
             }
             else
             {
@@ -271,9 +262,9 @@ public class IssueProcessor
         {
             LogIssue(issueKey, $"PriorityScore updated to {newScore:0.####}.");
             _updatedCount++;
-            if (currentScore is null && newScore == 0)
+            if (skipComment || (currentScore is null && newScore == 0))
             {
-                LogIssue(issueKey, "Skipped Jira comment because PriorityScore is null and new value is 0.");
+                LogIssue(issueKey, "Skipped Jira comment because PriorityScore and inputs are null.");
                 return;
             }
 

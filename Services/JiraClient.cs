@@ -15,58 +15,105 @@ public class JiraClient
         _settings = settings;
     }
 
-    public async Task<IssuePage> LoadIssuesPageAsync(string[] fields, int startAt, int maxResults)
+    public async Task<List<string>> GetIssueKeysForFilterAsync(int maxResults)
     {
-        var jql = $"filter={_settings.FilterId}";
-        var fieldsParam = fields.Length == 0 ? "summary" : string.Join(",", fields);
-        var url = $"rest/api/{_settings.ApiVersion}/search/jql?jql={Uri.EscapeDataString(jql)}&startAt={startAt}&maxResults={maxResults}&fields={Uri.EscapeDataString(fieldsParam)}";
-        using var response = await _httpClient.GetAsync(url);
-        var rawBody = await response.Content.ReadAsStringAsync();
-        if (!response.IsSuccessStatusCode)
-        {
-            throw new HttpRequestException($"Failed to load filter {_settings.FilterId}: {(int)response.StatusCode} {rawBody}");
-        }
+        var allKeys = new List<string>();
+        var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        string? nextPageToken = null;
+        var isFirstPage = true;
 
-        using var doc = JsonDocument.Parse(rawBody);
-        var issues = new List<JiraIssue>();
-        var total = 0;
-        var totalKnown = false;
-
-        if (doc.RootElement.TryGetProperty("total", out var totalProp) && totalProp.ValueKind == JsonValueKind.Number)
+        while (true)
         {
-            total = totalProp.GetInt32();
-            totalKnown = true;
-        }
-
-        if (doc.RootElement.TryGetProperty("issues", out var issuesElement) && issuesElement.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var issueElement in issuesElement.EnumerateArray())
+            var url = $"rest/api/{_settings.ApiVersion}/search/jql";
+            var payload = new Dictionary<string, object?>
             {
-                var key = issueElement.TryGetProperty("key", out var keyProp) ? keyProp.GetString() : null;
-                if (string.IsNullOrWhiteSpace(key))
-                {
-                    continue;
-                }
+                ["jql"] = $"filter={_settings.FilterId}",
+                ["maxResults"] = maxResults,
+                ["fields"] = new[] { "summary" }
+            };
 
-                var fieldsElement = issueElement.TryGetProperty("fields", out var fieldsProp)
-                    ? fieldsProp.Clone()
-                    : new JsonElement();
-
-                issues.Add(new JiraIssue(key, fieldsElement));
+            if (isFirstPage)
+            {
+                // Use the base payload only.
             }
+            else
+            {
+                payload["nextPageToken"] = nextPageToken;
+            }
+
+            var payloadJson = JsonSerializer.Serialize(payload);
+            var requestContent = new StringContent(payloadJson, Encoding.UTF8, "application/json");
+            LogRequest(HttpMethod.Post, new Uri(_httpClient.BaseAddress!, url), requestContent);
+            LogRequestPayload(payloadJson);
+
+            using var response = await _httpClient.PostAsync(url, requestContent);
+            var rawBody = await response.Content.ReadAsStringAsync();
+            LogResponse(new Uri(_httpClient.BaseAddress!, url), response, rawBody);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new HttpRequestException($"Failed to load filter {_settings.FilterId}: {(int)response.StatusCode} {rawBody}");
+            }
+
+            using var doc = JsonDocument.Parse(rawBody);
+            var pageKeys = new List<string>();
+
+            if (doc.RootElement.TryGetProperty("issues", out var issuesElement) && issuesElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var issueElement in issuesElement.EnumerateArray())
+                {
+                    var key = issueElement.TryGetProperty("key", out var keyProp) ? keyProp.GetString() : null;
+                    if (!string.IsNullOrWhiteSpace(key))
+                    {
+                        pageKeys.Add(key);
+                    }
+                }
+            }
+
+            if (pageKeys.Count == 0)
+            {
+                if (isFirstPage)
+                {
+                    var snippet = rawBody.Length > 1000 ? rawBody[..1000] + "..." : rawBody;
+                    Console.WriteLine($"Filter response had zero issues. Body (truncated): {snippet}");
+                }
+                break;
+            }
+
+            var newKeys = 0;
+            foreach (var key in pageKeys)
+            {
+                if (seenKeys.Add(key))
+                {
+                    allKeys.Add(key);
+                    newKeys++;
+                }
+            }
+
+            if (newKeys == 0)
+            {
+                Console.WriteLine("No new issues in page; stopping pagination to avoid repeat.");
+                break;
+            }
+
+            if (doc.RootElement.TryGetProperty("nextPageToken", out var nextTokenProp) &&
+                nextTokenProp.ValueKind == JsonValueKind.String)
+            {
+                nextPageToken = nextTokenProp.GetString();
+            }
+            else
+            {
+                nextPageToken = null;
+            }
+
+            if (string.IsNullOrWhiteSpace(nextPageToken))
+            {
+                break;
+            }
+
+            isFirstPage = false;
         }
 
-        if (totalKnown && total == 0 && issues.Count > 0)
-        {
-            totalKnown = false;
-        }
-
-        if (!totalKnown && issues.Count > 0)
-        {
-            total = startAt + issues.Count;
-        }
-
-        return new IssuePage(total, totalKnown, issues);
+        return allKeys;
     }
 
     public async Task<JsonElement> LoadIssueFieldsAsync(string issueKey, IEnumerable<string> fields)
@@ -95,8 +142,10 @@ public class JiraClient
     public async Task<Dictionary<string, string>> LoadIssueFieldNamesAsync(string issueKey)
     {
         var url = $"rest/api/{_settings.ApiVersion}/issue/{issueKey}?expand=names&fields=summary";
+        LogRequest(HttpMethod.Get, new Uri(_httpClient.BaseAddress!, url), null);
         using var response = await _httpClient.GetAsync(url);
         var rawBody = await response.Content.ReadAsStringAsync();
+        LogResponse(new Uri(_httpClient.BaseAddress!, url), response, rawBody);
         if (!response.IsSuccessStatusCode)
         {
             Console.WriteLine($"Failed to load field names for {issueKey}: {(int)response.StatusCode} {rawBody}");
@@ -130,16 +179,27 @@ public class JiraClient
             }
         };
 
+        var payloadJson = JsonSerializer.Serialize(payload);
+        var requestContent = new StringContent(payloadJson, Encoding.UTF8, "application/json");
+        LogRequest(HttpMethod.Put, new Uri(_httpClient.BaseAddress!, url), requestContent);
+        LogRequestPayload(payloadJson);
+
         using var response = await _httpClient.PutAsync(
             url,
-            new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"));
+            requestContent);
 
         if (response.IsSuccessStatusCode)
         {
+            if (_settings.LogResponses)
+            {
+                var successBody = await response.Content.ReadAsStringAsync();
+                LogResponse(new Uri(_httpClient.BaseAddress!, url), response, successBody);
+            }
             return true;
         }
 
         var body = await response.Content.ReadAsStringAsync();
+        LogResponse(new Uri(_httpClient.BaseAddress!, url), response, body);
         Console.WriteLine($"Failed to update PriorityScore for {issueKey}: {(int)response.StatusCode} {body}");
         return false;
     }
@@ -166,16 +226,27 @@ public class JiraClient
             }
         };
 
+        var payloadJson = JsonSerializer.Serialize(payload);
+        var requestContent = new StringContent(payloadJson, Encoding.UTF8, "application/json");
+        LogRequest(HttpMethod.Post, new Uri(_httpClient.BaseAddress!, url), requestContent);
+        LogRequestPayload(payloadJson);
+
         using var response = await _httpClient.PostAsync(
             url,
-            new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"));
+            requestContent);
 
         if (response.IsSuccessStatusCode)
         {
+            if (_settings.LogResponses)
+            {
+                var successBody = await response.Content.ReadAsStringAsync();
+                LogResponse(new Uri(_httpClient.BaseAddress!, url), response, successBody);
+            }
             return true;
         }
 
         var body = await response.Content.ReadAsStringAsync();
+        LogResponse(new Uri(_httpClient.BaseAddress!, url), response, body);
         Console.WriteLine($"Failed to add comment for {issueKey}: {(int)response.StatusCode} {body}");
         return false;
     }
@@ -210,8 +281,10 @@ public class JiraClient
 
     private async Task<JsonElement> TryLoadIssueFieldsAsync(string url, string issueKey, string label)
     {
+        LogRequest(HttpMethod.Get, new Uri(_httpClient.BaseAddress!, url), null);
         using var response = await _httpClient.GetAsync(url);
         var rawBody = await response.Content.ReadAsStringAsync();
+        LogResponse(new Uri(_httpClient.BaseAddress!, url), response, rawBody);
         if (!response.IsSuccessStatusCode)
         {
             Console.WriteLine($"Failed to load issue {issueKey} ({label}): {(int)response.StatusCode} {rawBody}");
@@ -227,5 +300,67 @@ public class JiraClient
         var snippet = rawBody.Length > 1000 ? rawBody[..1000] + "..." : rawBody;
         Console.WriteLine($"Issue {issueKey} response missing fields ({label}). Body (truncated): {snippet}");
         return new JsonElement();
+    }
+
+    private void LogRequest(HttpMethod method, Uri url, HttpContent? content)
+    {
+        if (!_settings.LogRequests)
+        {
+            return;
+        }
+
+        Console.WriteLine($"Jira Request: {method} {url}");
+        if (!_settings.LogRequestHeaders)
+        {
+            return;
+        }
+
+        foreach (var header in _httpClient.DefaultRequestHeaders)
+        {
+            var value = header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
+                ? "[redacted]"
+                : string.Join(", ", header.Value);
+            Console.WriteLine($"Header: {header.Key}={value}");
+        }
+
+        if (content != null)
+        {
+            foreach (var header in content.Headers)
+            {
+                Console.WriteLine($"Header: {header.Key}={string.Join(", ", header.Value)}");
+            }
+        }
+    }
+
+    private void LogResponse(Uri url, HttpResponseMessage response, string? body)
+    {
+        if (!_settings.LogResponses)
+        {
+            return;
+        }
+
+        Console.WriteLine($"Jira Response: {(int)response.StatusCode} {response.ReasonPhrase} {url}");
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            Console.WriteLine("Jira Response Body: (empty)");
+            return;
+        }
+        Console.WriteLine($"Jira Response Body: {body}");
+    }
+
+    private void LogRequestPayload(string? payloadJson)
+    {
+        if (!_settings.LogRequests)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(payloadJson))
+        {
+            Console.WriteLine("Jira Request Payload: (empty)");
+            return;
+        }
+
+        Console.WriteLine($"Jira Request Payload: {payloadJson}");
     }
 }

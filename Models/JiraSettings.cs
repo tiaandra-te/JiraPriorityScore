@@ -9,6 +9,9 @@ public record JiraSettings
     public int FilterId { get; init; }
     public int PageSize { get; init; } = 50;
     public bool DryRun { get; init; } = true;
+    public bool LogRequests { get; init; } = false;
+    public bool LogRequestHeaders { get; init; } = false;
+    public bool LogResponses { get; init; } = false;
 
     public string RequestTypeFieldId { get; init; } = "";
     public string RequestTypeFieldName { get; init; } = "Request Type";
